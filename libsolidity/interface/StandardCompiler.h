@@ -46,11 +46,13 @@ public:
 	}
 
 	/// Sets all input parameters according to @a _input which conforms to the standardized input
-	/// format, performs compilation and returns a standardized output.
-	Json::Value compile(Json::Value const& _input) noexcept;
+	/// format, performs compilation and returns a standardized output. If @a _leakExceptions is
+	/// true, internal exceptions are leaked to the caller of this function.
+	Json::Value compile(Json::Value const& _input, bool _leakExceptions);
 	/// Parses input as JSON and peforms the above processing steps, returning a serialized JSON
-	/// output. Parsing errors are returned as regular errors.
-	std::string compile(std::string const& _input) noexcept;
+	/// output. Parsing errors are returned as regular errors. If @a _leakExceptions is
+	/// true, internal exceptions are leaked to the caller of this function.
+	std::string compile(std::string const& _input, bool _leakExceptions);
 
 private:
 	struct InputsAndSettings
@@ -75,6 +77,7 @@ private:
 	boost::variant<InputsAndSettings, Json::Value> parseInput(Json::Value const& _input);
 
 	Json::Value compileSolidity(InputsAndSettings _inputsAndSettings);
+	Json::Value compileSolidityLeakExceptions(InputsAndSettings _inputsAndSettings);
 	Json::Value compileYul(InputsAndSettings _inputsAndSettings);
 
 	ReadCallback::Callback m_readFile;

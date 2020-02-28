@@ -23,6 +23,7 @@
 #include <libsolc/libsolc.h>
 
 #include <sstream>
+#include <libsolidity/interface/StandardCompiler.h>
 
 using namespace std;
 using namespace solidity;
@@ -39,16 +40,25 @@ static vector<string> s_evmVersions = {
 	"istanbul"
 };
 
-void FuzzerUtil::runCompiler(string const& _input, bool _quiet)
+void FuzzerUtil::runCompiler(string const& _input, bool _quiet, bool _leakExceptions)
 {
 	if (!_quiet)
 		cout << "Input JSON: " << _input << endl;
-	string outputString(solidity_compile(_input.c_str(), nullptr, nullptr));
+
+	string outputString;
+	if (!_leakExceptions)
+		outputString = solidity_compile(_input.c_str(), nullptr, nullptr);
+	else
+	{
+		solidity::frontend::StandardCompiler standardCompiler{nullptr};
+		outputString = standardCompiler.compile(_input, /*leakExceptions=*/true);
+	}
 	if (!_quiet)
 		cout << "Output JSON: " << outputString << endl;
 
 	// This should be safe given the above copies the output.
-	solidity_reset();
+	if (!_leakExceptions)
+		solidity_reset();
 
 	Json::Value output;
 	if (!jsonParseStrict(outputString, output))
@@ -57,7 +67,7 @@ void FuzzerUtil::runCompiler(string const& _input, bool _quiet)
 		cout << msg << endl;
 		throw std::runtime_error(std::move(msg));
 	}
-	if (output.isMember("errors"))
+	if (!_leakExceptions && output.isMember("errors"))
 		for (auto const& error: output["errors"])
 		{
 			string invalid = findAnyOf(error["type"].asString(), vector<string>{
@@ -73,7 +83,7 @@ void FuzzerUtil::runCompiler(string const& _input, bool _quiet)
 		}
 }
 
-void FuzzerUtil::testCompiler(string const& _input, bool _optimize, bool _quiet)
+void FuzzerUtil::testCompiler(string const& _input, bool _optimize, bool _quiet, bool _leakExceptions)
 {
 	if (!_quiet)
 		cout << "Testing compiler " << (_optimize ? "with" : "without") << " optimizer." << endl;
@@ -94,7 +104,7 @@ void FuzzerUtil::testCompiler(string const& _input, bool _optimize, bool _quiet)
 	// Enable all Contract-level outputs.
 	config["settings"]["outputSelection"]["*"]["*"][0] = "*";
 
-	runCompiler(jsonCompactPrint(config), _quiet);
+	runCompiler(jsonCompactPrint(config), _quiet, _leakExceptions);
 }
 
 void FuzzerUtil::testConstantOptimizer(string const& _input, bool _quiet)
@@ -139,5 +149,5 @@ void FuzzerUtil::testStandardCompiler(string const& _input, bool _quiet)
 	if (!_quiet)
 		cout << "Testing compiler via JSON interface." << endl;
 
-	runCompiler(_input, _quiet);
+	runCompiler(_input, _quiet, false);
 }
