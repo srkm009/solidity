@@ -17,73 +17,37 @@
 
 #include <test/tools/fuzzer_common.h>
 
+#include <libsolidity/interface/CompilerStack.h>
+
 #include <libsolutil/JSON.h>
+
 #include <libevmasm/Assembly.h>
 #include <libevmasm/ConstantOptimiser.h>
+
 #include <libsolc/libsolc.h>
 
+#include <liblangutil/Exceptions.h>
+
 #include <sstream>
-#include <libsolidity/interface/StandardCompiler.h>
 
 using namespace std;
 using namespace solidity;
 using namespace solidity::util;
 using namespace solidity::evmasm;
+using namespace solidity::langutil;
 
-static vector<string> s_evmVersions = {
-	"homestead",
-	"tangerineWhistle",
-	"spuriousDragon",
-	"byzantium",
-	"constantinople",
-	"petersburg",
-	"istanbul"
+static vector<EVMVersion> s_evmVersions = {
+	EVMVersion::homestead(),
+	EVMVersion::tangerineWhistle(),
+	EVMVersion::spuriousDragon(),
+	EVMVersion::byzantium(),
+	EVMVersion::constantinople(),
+	EVMVersion::petersburg(),
+	EVMVersion::istanbul(),
+	EVMVersion::berlin()
 };
 
-void FuzzerUtil::runCompiler(string const& _input, bool _quiet, bool _leakExceptions)
-{
-	if (!_quiet)
-		cout << "Input JSON: " << _input << endl;
-
-	string outputString;
-	if (!_leakExceptions)
-		outputString = solidity_compile(_input.c_str(), nullptr, nullptr);
-	else
-	{
-		solidity::frontend::StandardCompiler standardCompiler{nullptr};
-		outputString = standardCompiler.compile(_input, /*leakExceptions=*/true);
-	}
-	if (!_quiet)
-		cout << "Output JSON: " << outputString << endl;
-
-	// This should be safe given the above copies the output.
-	if (!_leakExceptions)
-		solidity_reset();
-
-	Json::Value output;
-	if (!jsonParseStrict(outputString, output))
-	{
-		string msg{"Compiler produced invalid JSON output."};
-		cout << msg << endl;
-		throw std::runtime_error(std::move(msg));
-	}
-	if (!_leakExceptions && output.isMember("errors"))
-		for (auto const& error: output["errors"])
-		{
-			string invalid = findAnyOf(error["type"].asString(), vector<string>{
-					"Exception",
-					"InternalCompilerError"
-			});
-			if (!invalid.empty())
-			{
-				string msg = "Invalid error: \"" + error["type"].asString() + "\"";
-				cout << msg << endl;
-				throw std::runtime_error(std::move(msg));
-			}
-		}
-}
-
-void FuzzerUtil::testCompiler(string const& _input, bool _optimize, bool _quiet, bool _leakExceptions)
+void FuzzerUtil::testCompilerJsonInterface(string const& _input, bool _optimize, bool _quiet)
 {
 	if (!_quiet)
 		cout << "Testing compiler " << (_optimize ? "with" : "without") << " optimizer." << endl;
@@ -97,14 +61,75 @@ void FuzzerUtil::testCompiler(string const& _input, bool _optimize, bool _quiet,
 	config["settings"]["optimizer"] = Json::objectValue;
 	config["settings"]["optimizer"]["enabled"] = _optimize;
 	config["settings"]["optimizer"]["runs"] = 200;
-	config["settings"]["evmVersion"] = s_evmVersions[_input.size() % s_evmVersions.size()];
+	config["settings"]["evmVersion"] = "berlin";
 
 	// Enable all SourceUnit-level outputs.
 	config["settings"]["outputSelection"]["*"][""][0] = "*";
 	// Enable all Contract-level outputs.
 	config["settings"]["outputSelection"]["*"]["*"][0] = "*";
 
-	runCompiler(jsonCompactPrint(config), _quiet, _leakExceptions);
+	runCompiler(jsonCompactPrint(config), _quiet);
+}
+
+void FuzzerUtil::testCompiler(string const& _input, bool _optimize)
+{
+	frontend::CompilerStack compiler;
+	EVMVersion evmVersion = s_evmVersions[_input.size() % s_evmVersions.size()];
+	frontend::OptimiserSettings optimiserSettings;
+	if (_optimize)
+		optimiserSettings = frontend::OptimiserSettings::standard();
+	else
+		optimiserSettings = frontend::OptimiserSettings::none();
+	compiler.setSources({{"", _input}});
+	compiler.setEVMVersion(evmVersion);
+	compiler.setOptimiserSettings(optimiserSettings);
+	try
+	{
+		compiler.compile();
+	}
+	catch (Error const&)
+	{
+	}
+	catch (FatalError const&)
+	{
+	}
+	catch (UnimplementedFeatureError const&)
+	{
+	}
+}
+
+void FuzzerUtil::runCompiler(string const& _input, bool _quiet)
+{
+	if (!_quiet)
+		cout << "Input JSON: " << _input << endl;
+	string outputString(solidity_compile(_input.c_str(), nullptr, nullptr));
+	if (!_quiet)
+		cout << "Output JSON: " << outputString << endl;
+
+	// This should be safe given the above copies the output.
+	solidity_reset();
+
+	Json::Value output;
+	if (!jsonParseStrict(outputString, output))
+	{
+		string msg{"Compiler produced invalid JSON output."};
+		cout << msg << endl;
+		throw std::runtime_error(std::move(msg));
+	}
+	if (output.isMember("errors"))
+		for (auto const& error: output["errors"])
+		{
+			string invalid = findAnyOf(error["type"].asString(), vector<string>{
+					"Exception",
+					"InternalCompilerError"
+			});
+			if (!invalid.empty())
+			{
+				string msg = "Invalid error: \"" + error["type"].asString() + "\"";
+				cout << msg << endl;
+				throw std::runtime_error(std::move(msg));
+			}
+		}
 }
 
 void FuzzerUtil::testConstantOptimizer(string const& _input, bool _quiet)
@@ -149,5 +174,5 @@ void FuzzerUtil::testStandardCompiler(string const& _input, bool _quiet)
 	if (!_quiet)
 		cout << "Testing compiler via JSON interface." << endl;
 
-	runCompiler(_input, _quiet, false);
+	runCompiler(_input, _quiet);
 }

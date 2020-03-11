@@ -110,7 +110,7 @@ ReadCallback::Callback wrapReadCallback(CStyleReadFileCallback _readCallback, vo
 string compile(string _input, CStyleReadFileCallback _readCallback, void* _readContext)
 {
 	StandardCompiler compiler(wrapReadCallback(_readCallback, _readContext));
-	return compiler.compile(move(_input), false);
+	return compiler.compile(move(_input));
 }
 
 }
