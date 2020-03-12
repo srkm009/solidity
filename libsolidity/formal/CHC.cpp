@@ -131,7 +131,6 @@ bool CHC::visit(ContractDefinition const& _contract)
 
 	clearIndices(&_contract);
 
-
 	// TODO create static instances for Bool/Int sorts in SolverInterface.
 	auto boolSort = make_shared<smt::Sort>(smt::Kind::Bool);
 	auto errorFunctionSort = make_shared<smt::FunctionSort>(
@@ -572,6 +571,21 @@ void CHC::unknownFunctionCall(FunctionCall const&)
 	m_unknownFunctionCallSeen = true;
 }
 
+void CHC::arrayLength(MemberAccess const& _arrayLength)
+{
+	auto const& array = _arrayLength.expression();
+	auto const* type = array.annotation().type;
+	solAssert(type->category() == Type::Category::Array, "");
+	solAssert(_arrayLength.memberName() == "length", "");
+	solAssert(m_arrayLengths.count(type->toString()), "");
+
+	auto const& lengthArray = m_arrayLengths.at(type->toString());
+	defineExpr(_arrayLength, smt::Expression::select(
+		lengthArray.currentValue(),
+		expr(array)
+	));
+}
+
 void CHC::resetSourceAnalysis()
 {
 	m_verificationTargets.clear();
@@ -579,6 +593,7 @@ void CHC::resetSourceAnalysis()
 	m_functionAssertions.clear();
 	m_callGraph.clear();
 	m_summaries.clear();
+	m_arrayLengths.clear();
 }
 
 void CHC::resetContractAnalysis()
@@ -654,6 +669,48 @@ vector<VariableDeclaration const*> CHC::stateVariablesIncludingInheritedAndPriva
 	return stateVars;
 }
 
+void CHC::createArrayLengths(Type const& _type)
+{
+	solAssert(_type.category() == Type::Category::Array, "");
+	auto const& arrayTypeName = _type.toString();
+	if (m_arrayLengths.count(arrayTypeName))
+		return;
+
+	auto arraySort = smt::smtSort(_type);
+	auto intSort = make_shared<smt::Sort>(smt::Kind::Int);
+	auto lengthArraySort = make_shared<smt::ArraySort>(arraySort, intSort);
+	m_arrayLengths.emplace(
+		arrayTypeName,
+		smt::SymbolicArrayVariable(
+			lengthArraySort,
+			arrayTypeName + "_length",
+			m_context
+		)
+	);
+}
+
+void CHC::createContractArrayLengths(ContractDefinition const& _contract)
+{
+	for (auto const* var: stateVariablesIncludingInheritedAndPrivate(_contract))
+		if (var->type()->category() == Type::Category::Array)
+			createArrayLengths(*var->type());
+}
+
+void CHC::createFunctionArrayLengths(FunctionDefinition const& _function)
+{
+	for (auto const& var: _function.parameters())
+		if (var->type()->category() == Type::Category::Array)
+			createArrayLengths(*var->type());
+
+	for (auto const& var: _function.returnParameters())
+		if (var->type()->category() == Type::Category::Array)
+			createArrayLengths(*var->type());
+
+	for (auto const& var: _function.localVariables())
+		if (var->type()->category() == Type::Category::Array)
+			createArrayLengths(*var->type());
+}
+
 vector<smt::SortPointer> CHC::stateSorts(ContractDefinition const& _contract)
 {
 	vector<smt::SortPointer> stateSorts;
@@ -711,8 +768,13 @@ smt::SortPointer CHC::sort(FunctionDefinition const& _function)
 	vector<smt::SortPointer> outputSorts;
 	for (auto const& var: _function.returnParameters())
 		outputSorts.push_back(smt::smtSortAbstractFunction(*var->type()));
+
+	vector<smt::SortPointer> arrayLengthSorts;
+	for ([[maybe_unused]] auto const& [typeName, lengthArray]: m_arrayLengths)
+		arrayLengthSorts.push_back(lengthArray.sort());
+
 	return make_shared<smt::FunctionSort>(
-		vector<smt::SortPointer>{intSort} + m_stateSorts + inputSorts + m_stateSorts + inputSorts + outputSorts,
+		vector<smt::SortPointer>{intSort} + arrayLengthSorts + m_stateSorts + inputSorts + m_stateSorts + inputSorts + outputSorts,
 		boolSort
 	);
 }
@@ -775,8 +837,12 @@ void CHC::defineInterfacesAndSummaries(SourceUnit const& _source)
 				for (auto const* var: stateVariablesIncludingInheritedAndPrivate(*base))
 					if (!m_context.knownVariable(*var))
 						createVariable(*var);
+				createContractArrayLengths(*base);
 				for (auto const* function: base->definedFunctions())
+				{
 					m_summaries[contract].emplace(function, createSummaryBlock(*function, *contract));
+					createFunctionArrayLengths(*function);
+				}
 			}
 }
 
@@ -902,7 +968,13 @@ vector<smt::Expression> CHC::currentFunctionVariables()
 	vector<smt::Expression> returnExprs;
 	for (auto const& var: m_currentFunction->returnParameters())
 		returnExprs.push_back(m_context.variable(*var)->currentValue());
+
+	vector<smt::Expression> arrayLengths;
+	for ([[maybe_unused]] auto const& [typeName, lengthArray]: m_arrayLengths)
+		arrayLengths.push_back(lengthArray.currentValue());
+
 	return vector<smt::Expression>{m_error.currentValue()} +
+		arrayLengths +
 		initialStateVariables() +
 		initInputExprs +
 		currentStateVariables() +

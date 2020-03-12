@@ -78,6 +78,7 @@ private:
 	void visitAssert(FunctionCall const& _funCall);
 	void internalFunctionCall(FunctionCall const& _funCall);
 	void unknownFunctionCall(FunctionCall const& _funCall);
+	void arrayLength(MemberAccess const& _arrayLength) override;
 	//@}
 
 	struct IdCompare
@@ -98,6 +99,13 @@ private:
 	void setCurrentBlock(smt::SymbolicFunctionVariable const& _block, std::vector<smt::Expression> const* _arguments = nullptr);
 	std::set<Expression const*, IdCompare> transactionAssertions(ASTNode const* _txRoot);
 	static std::vector<VariableDeclaration const*> stateVariablesIncludingInheritedAndPrivate(ContractDefinition const& _contract);
+
+	/// Creates the array that contains array lengths for the given type.
+	void createArrayLengths(Type const& _type);
+	/// Creates the array that contains array lengths for state variables.
+	void createContractArrayLengths(ContractDefinition const& _contract);
+	/// Creates the array that contains array lengths for function variables.
+	void createFunctionArrayLengths(FunctionDefinition const& _function);
 	//@}
 
 	/// Sort helpers.
@@ -231,6 +239,12 @@ private:
 	/// State variables.
 	/// Used to create all predicates.
 	std::vector<VariableDeclaration const*> m_stateVariables;
+
+	/// Maps an array type (from its canonical name) to a symbolic
+	/// array that maps arrays to their lengths.
+	/// Ideally this would be an Uninterpreted Function, but z3
+	/// does not allow functions as arguments (second order).
+	std::map<std::string, smt::SymbolicArrayVariable> m_arrayLengths;
 	//@}
 
 	/// Verification targets.

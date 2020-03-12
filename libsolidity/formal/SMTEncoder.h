@@ -238,6 +238,9 @@ protected:
 	/// @returns a note to be added to warnings.
 	std::string extraComment();
 
+	/// Allows each engine to handle array length.
+	virtual void arrayLength(MemberAccess const& /*_arrayLength*/) {}
+
 	struct VerificationTarget
 	{
 		enum class Type { ConstantCondition, Underflow, Overflow, UnderOverflow, DivByZero, Balance, Assert } type;

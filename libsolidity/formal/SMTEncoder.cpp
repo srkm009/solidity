@@ -864,6 +864,22 @@ bool SMTEncoder::visit(MemberAccess const& _memberAccess)
 			return false;
 		}
 	}
+	else if (exprType->category() == Type::Category::Array)
+	{
+		_memberAccess.expression().accept(*this);
+		if (_memberAccess.memberName() == "length")
+			arrayLength(_memberAccess);
+		else
+		{
+			auto const& name = _memberAccess.memberName();
+			solAssert(name == "push" || name == "pop", "");
+			m_errorReporter.warning(
+				_memberAccess.location(),
+				"Assertion checker does not yet support array member \"" + name + "\"."
+			);
+		}
+		return false;
+	}
 	else
 		m_errorReporter.warning(
 			_memberAccess.location(),
